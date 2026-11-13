@@ -798,24 +798,24 @@ export default function App() {
 
       {/* TOP BAR: VISITOR BANNER OR OWNER HUD */}
       {isVisitor ? (
-        <header className="fixed top-3 left-0 right-0 z-50 px-3 pointer-events-none flex justify-center">
-          <div className="pointer-events-auto flex items-center gap-2.5 px-4 py-2 sm:px-6 sm:py-2.5 rounded-full bg-slate-900/90 backdrop-blur-md border border-sky-400/50 shadow-2xl max-w-full">
-            <span className="text-base sm:text-lg">🐾</span>
-            <div className="flex items-center gap-1.5 min-w-0">
+        <header className="fixed top-2.5 left-0 right-0 z-50 px-2 sm:px-4 pointer-events-none flex justify-center">
+          <div className="pointer-events-auto flex items-center gap-2 px-3 py-1.5 sm:px-5 sm:py-2 rounded-full bg-slate-900/90 backdrop-blur-md border border-sky-400/40 shadow-xl max-w-[94vw] whitespace-nowrap">
+            <span className="text-sm shrink-0">🐾</span>
+            <div className="flex items-center gap-1 min-w-0">
               <span className="text-xs sm:text-sm font-semibold text-slate-200 whitespace-nowrap">
-                Anda masuk ke wilayah pet
+                Wilayah Pet
               </span>
-              <span className="text-xs sm:text-sm font-black text-sky-300 truncate max-w-[140px] sm:max-w-[220px]">
+              <span className="text-xs sm:text-sm font-bold text-sky-300 truncate max-w-[120px] sm:max-w-[200px]">
                 {targetName}
               </span>
             </div>
-            <span className="shrink-0 text-[10px] uppercase font-black px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-400/40">
-              Mode Pengunjung
+            <span className="shrink-0 text-[10px] uppercase font-black px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-400/30 whitespace-nowrap">
+              Pengunjung
             </span>
             <button
               onClick={toggleSound}
               title={soundEnabled ? 'Matikan Suara' : 'Nyalakan Suara'}
-              className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 flex items-center justify-center text-white transition-transform active:scale-95 shrink-0 ml-1 cursor-pointer"
+              className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 flex items-center justify-center text-white transition-transform active:scale-95 shrink-0 ml-0.5 cursor-pointer"
             >
               {soundEnabled ? (
                 <Volume2 className="w-3.5 h-3.5 text-white" />
@@ -1041,11 +1041,11 @@ export default function App() {
         </div>
       )}
 
-      {/* Indikator Wilayah Pet Kosong (Khusus Mode Pengunjung jika pemilik belum menempatkan pet) */}
+      {/* Indikator Wilayah Pet Kosong (Khusus Mode Pengunjung jika pemilik belum menempatkan pet - 1 BARIS RAPI) */}
       {isVisitor && deployedPets.length === 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 px-4 py-2 rounded-full bg-slate-900/85 backdrop-blur-md border border-slate-700/80 shadow-lg text-slate-300 text-xs font-semibold flex items-center gap-2 pointer-events-none">
-          <span>🐾</span>
-          <span>Pemilik belum menempatkan peliharaan di pulau ini</span>
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 px-4 py-2 rounded-full bg-slate-900/90 backdrop-blur-md border border-slate-700/80 shadow-xl text-slate-200 text-xs font-semibold flex items-center gap-2 pointer-events-none whitespace-nowrap max-w-[94vw]">
+          <span className="text-sm shrink-0">🐾</span>
+          <span className="whitespace-nowrap">Pemilik belum menempatkan peliharaan di pulau ini</span>
         </div>
       )}
 
