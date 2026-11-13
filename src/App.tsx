@@ -108,10 +108,21 @@ export default function App() {
   const [zenMode, setZenMode] = useState<boolean>(false);
   const [cameraResetTrigger, setCameraResetTrigger] = useState<number>(0);
 
-  // 7-Hour Treasure Chest countdown state (Reset cooldown agar pengguna dapat langsung membuka dan mengklaim hadiah)
+  // URL Query Parameters untuk Mode Pemilik atau Pengunjung
+  const urlParams = useMemo(() => {
+    if (typeof window === 'undefined') return new URLSearchParams();
+    return new URLSearchParams(window.location.search);
+  }, []);
+
+  const isVisitor = urlParams.get('isVisitor') === '1';
+  const targetUid = urlParams.get('targetUid') || urlParams.get('uid') || 'guest';
+  const targetName =
+    urlParams.get('targetName') || urlParams.get('name') || 'Pemilik Pet';
+
+  // 7-Hour Treasure Chest countdown state (Hanya untuk pemilik)
   const [chestNextClaimAt, setChestNextClaimAt] = useState<number>(() => {
     try {
-      localStorage.removeItem(CHEST_STORAGE_KEY);
+      localStorage.removeItem(getChestStorageKey());
     } catch {}
     return 0; // Siap langsung dibuka!
   });
@@ -131,61 +142,64 @@ export default function App() {
 
   const [userId, setUserId] = useState<string>('guest');
 
-  // Sinkronisasi data akun dari Supabase (Setiap akun punya data dan koin sendiri)
+  // Sinkronisasi data akun dari Supabase (Setiap akun punya data sendiri)
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      const urlParams = new URLSearchParams(window.location.search);
-      const uid = urlParams.get('uid') || 'guest';
-      setUserId(uid);
+      const uidToSync = isVisitor ? targetUid : (urlParams.get('uid') || 'guest');
+      setUserId(uidToSync);
 
-      if (uid && uid !== 'guest') {
-        syncNuePetAccount(uid).then((data) => {
+      if (uidToSync && uidToSync !== 'guest') {
+        syncNuePetAccount(uidToSync).then((data) => {
           if (data) {
-            setCoins(data.coins);
-            setGems(data.crystals);
-            setActiveIslandId(data.activeIslandId);
-            setActiveSkyId(data.activeSkyId);
-            setUnlockedIslandIds(data.unlockedIslandIds);
-            setUnlockedSkyIds(data.unlockedSkyIds);
+            if (!isVisitor) {
+              setCoins(data.coins);
+              setGems(data.crystals);
+            }
+            setActiveIslandId(data.activeIslandId || 'dc_island_1');
+            setActiveSkyId(data.activeSkyId || 'siang_cerah');
+            setUnlockedIslandIds(data.unlockedIslandIds || ['dc_island_1']);
+            setUnlockedSkyIds(data.unlockedSkyIds || ['siang_cerah']);
             setOwnedPets(data.pets || []);
 
-            // Hitung akumulasi koin offline presisi harian (1 hari = 86.400 detik)
-            if (data.lastClaimAt) {
-              const elapsedSec = Math.max(0, (Date.now() - data.lastClaimAt) / 1000);
-              const activePets = data.pets || [];
-              const totalDailyRate = activePets
-                .filter((p) => p.isDeployed)
-                .reduce(
-                  (sum, p) =>
-                    sum +
-                    getEffectiveCoinsPerDay(
-                      p.speciesId,
-                      p.star || 1,
-                      data.activeIslandId
-                    ),
-                  0
+            // Hitung akumulasi koin offline presisi harian hanya untuk akun pemilik
+            if (!isVisitor) {
+              if (data.lastClaimAt) {
+                const elapsedSec = Math.max(0, (Date.now() - data.lastClaimAt) / 1000);
+                const activePets = data.pets || [];
+                const totalDailyRate = activePets
+                  .filter((p) => p.isDeployed)
+                  .reduce(
+                    (sum, p) =>
+                      sum +
+                      getEffectiveCoinsPerDay(
+                        p.speciesId,
+                        p.star || 1,
+                        data.activeIslandId
+                      ),
+                    0
+                  );
+                const offlineCoins = Math.floor(
+                  (elapsedSec / 86400) * totalDailyRate
                 );
-              const offlineCoins = Math.floor(
-                (elapsedSec / 86400) * totalDailyRate
-              );
-              setUnclaimedCoins(offlineCoins);
-            }
+                setUnclaimedCoins(offlineCoins);
+              }
 
-            // Sinkronisasi status cooldown peti dari database (jika null, peti siap dibuka)
-            if (data.lastChestClaimAt) {
-              const nextClaim = data.lastChestClaimAt + CHEST_COOLDOWN_MS;
-              if (Date.now() < nextClaim) {
-                setChestNextClaimAt(nextClaim);
+              // Sinkronisasi status cooldown peti dari database (jika null, peti siap dibuka)
+              if (data.lastChestClaimAt) {
+                const nextClaim = data.lastChestClaimAt + CHEST_COOLDOWN_MS;
+                if (Date.now() < nextClaim) {
+                  setChestNextClaimAt(nextClaim);
+                } else {
+                  setChestNextClaimAt(0);
+                }
               } else {
                 setChestNextClaimAt(0);
               }
-            } else {
-              setChestNextClaimAt(0);
             }
           }
         });
-      } else {
+      } else if (!isVisitor) {
         const urlCrystals = urlParams.get('crystals');
         if (urlCrystals) {
           const parsed = parseInt(urlCrystals, 10);
@@ -217,10 +231,11 @@ export default function App() {
         } catch {}
       }
     } catch {}
-  }, []);
+  }, [isVisitor, targetUid, urlParams]);
 
-  // Sinkronisasi pembaruan Crystal dari parent webview
+  // Sinkronisasi pembaruan Crystal dari parent webview (hanya berlaku jika pemilik akun)
   useEffect(() => {
+    if (isVisitor) return;
     const handleMessage = (event: MessageEvent) => {
       try {
         const data =
@@ -236,7 +251,7 @@ export default function App() {
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, []);
+  }, [isVisitor]);
 
   const chestRemainingMs = Math.max(0, chestNextClaimAt - nowMs);
   const isChestReady = chestRemainingMs <= 0;
@@ -287,12 +302,16 @@ export default function App() {
     []
   );
 
-  const handlePassiveCoinTick = useCallback((coinsEarned: number) => {
-    setUnclaimedCoins((prev) => prev + coinsEarned);
-  }, []);
+  const handlePassiveCoinTick = useCallback(
+    (coinsEarned: number) => {
+      if (isVisitor) return;
+      setUnclaimedCoins((prev) => prev + coinsEarned);
+    },
+    [isVisitor]
+  );
 
   const handleClaimAllCoins = () => {
-    if (unclaimedCoins <= 0) return;
+    if (isVisitor || unclaimedCoins <= 0) return;
     soundFX.playCoinClaim();
 
     const batch: SuctionCoinParticle[] = Array.from({ length: 10 }).map(
@@ -343,6 +362,7 @@ export default function App() {
   };
 
   const handlePerformGacha = (count: 1 | 10): PetSpeciesId[] | null => {
+    if (isVisitor) return null;
     const cost = count === 1 ? GACHA_SINGLE_COST : GACHA_TEN_COST;
     if (gems < cost) return null;
 
@@ -391,6 +411,7 @@ export default function App() {
   };
 
   const handleToggleDeploy = (instanceId: string) => {
+    if (isVisitor) return;
     setOwnedPets((prev) => {
       const target = prev.find((p) => p.instanceId === instanceId);
       if (!target) return prev;
@@ -407,6 +428,7 @@ export default function App() {
   };
 
   const handleAutoDeployBest = () => {
+    if (isVisitor) return;
     setOwnedPets((prev) => {
       const sorted = [...prev].sort(
         (a, b) =>
@@ -427,6 +449,7 @@ export default function App() {
    * Sistem Evolusi / Merge Bintang (3x Pet Kembar -> ★2 atau ★3 dengan ukuran lebih besar & koin 2x lipat)
    */
   const handleMergeSpecies = (speciesId: PetSpeciesId, targetStar: number) => {
+    if (isVisitor) return;
     const sourceStar = targetStar - 1;
     setOwnedPets((prev) => {
       const candidates = prev.filter(
@@ -466,6 +489,7 @@ export default function App() {
    * Upgrade / Evolusi Level pet (Biaya: 500 Koin, langsung Max permanen tanpa reset)
    */
   const handleDirectStarUpgrade = (instanceId: string) => {
+    if (isVisitor) return;
     const target = ownedPets.find((p) => p.instanceId === instanceId);
     if (!target) return;
     const visuals = getPetStageVisuals(target.speciesId, 1);
@@ -510,6 +534,7 @@ export default function App() {
     speciesId: PetSpeciesId,
     targetStage: number
   ) => {
+    if (isVisitor) return;
     setOwnedPets((prev) =>
       prev.map((p) =>
         p.speciesId === speciesId
@@ -520,6 +545,7 @@ export default function App() {
   };
 
   const handleSelectSky = (skyId: SkyAtmosphereId) => {
+    if (isVisitor) return;
     const config = SKY_ATMOSPHERES_LIST.find((s) => s.id === skyId);
     if (!config) return;
 
@@ -534,6 +560,7 @@ export default function App() {
   };
 
   const handleSelectIsland = (islandId: IslandThemeId) => {
+    if (isVisitor) return;
     const config = ISLAND_THEMES_LIST.find((i) => i.id === islandId);
     if (!config) return;
 
@@ -555,7 +582,8 @@ export default function App() {
   };
 
   // Konversi Koin ke Crystal: 50.000 Koin = 5.000 Crystal (Rasio 10:1)
-  const handleConvertCoins = async (coinsToConvert: number) => {
+  const handleConvertCoins = async (coinsToConvert: number): Promise<void | { crystalsGained: number }> => {
+    if (isVisitor) return;
     if (userId && userId !== 'guest') {
       const res = await convertCoinsToCrystals(userId, coinsToConvert);
       if (res) {
@@ -578,6 +606,7 @@ export default function App() {
    * -> baru muncul hadiah Crystal & Koin, lalu user menekan 'Ambil Hadiah!' untuk mengklaim.
    */
   const handleClaimTreasureChest = () => {
+    if (isVisitor) return;
     const bonusCrystals = 250 + Math.floor(Math.random() * 7) * 50; // +250 s/d +550 Crystal ✦
     const bonusCoins = 400 + Math.floor(Math.random() * 9) * 50; // +400 s/d +800 Koin 🪙
 
@@ -621,6 +650,7 @@ export default function App() {
    * User menekan tombol 'Ambil Hadiah!': Saldo bertambah & cooldown 7 jam dimulai
    */
   const handleCollectChestReward = () => {
+    if (isVisitor) return;
     if (!lastChestReward) {
       setActiveModal('none');
       return;
@@ -666,6 +696,7 @@ export default function App() {
   };
 
   const handleChestWidgetClick = () => {
+    if (isVisitor) return;
     if (isChestReady) {
       handleClaimTreasureChest();
     } else {
@@ -691,7 +722,12 @@ export default function App() {
       className={`relative w-screen h-screen overflow-hidden bg-gradient-to-b ${activeSkyConfig.skyGradientClass} transition-colors duration-700 font-['Plus_Jakarta_Sans'] select-none`}
     >
       {/* Initial Game Loading Screen (Preloads 3D Island & Dragon Sprites) */}
-      {isLoading && <LoadingScreen onFinished={() => setIsLoading(false)} />}
+      {isLoading && (
+        <LoadingScreen
+          onFinished={() => setIsLoading(false)}
+          isReady={!isLoading}
+        />
+      )}
 
       {/* Zero-blur radial-gradient cloud layers (0% mobile GPU filter cost) */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
@@ -718,8 +754,10 @@ export default function App() {
           timeOfDay={timeOfDay}
           islandThemeId={activeIslandId}
           performanceMode={performanceMode}
-          telemetryEnabled={activeModal === 'architecture'}
+          telemetryEnabled={!isVisitor && activeModal === 'architecture'}
           cameraResetTrigger={cameraResetTrigger}
+          isVisitor={isVisitor}
+          onCanvasReady={() => setIsLoading(false)}
           onPetTapped={handlePetTapped}
           onPassiveCoinTick={handlePassiveCoinTick}
           onTelemetryUpdate={setLiveTelemetry}
@@ -758,8 +796,36 @@ export default function App() {
         ))}
       </div>
 
-      {/* TOP BAR HUD (NuePet Zoo Brand + Economy Controls) */}
-      {!zenMode && (
+      {/* TOP BAR: VISITOR BANNER OR OWNER HUD */}
+      {isVisitor ? (
+        <header className="fixed top-3 left-0 right-0 z-50 px-3 pointer-events-none flex justify-center">
+          <div className="pointer-events-auto flex items-center gap-2.5 px-4 py-2 sm:px-6 sm:py-2.5 rounded-full bg-slate-900/90 backdrop-blur-md border border-sky-400/50 shadow-2xl max-w-full">
+            <span className="text-base sm:text-lg">🐾</span>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-xs sm:text-sm font-semibold text-slate-200 whitespace-nowrap">
+                Anda masuk ke wilayah pet
+              </span>
+              <span className="text-xs sm:text-sm font-black text-sky-300 truncate max-w-[140px] sm:max-w-[220px]">
+                {targetName}
+              </span>
+            </div>
+            <span className="shrink-0 text-[10px] uppercase font-black px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-400/40">
+              Mode Pengunjung
+            </span>
+            <button
+              onClick={toggleSound}
+              title={soundEnabled ? 'Matikan Suara' : 'Nyalakan Suara'}
+              className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 flex items-center justify-center text-white transition-transform active:scale-95 shrink-0 ml-1 cursor-pointer"
+            >
+              {soundEnabled ? (
+                <Volume2 className="w-3.5 h-3.5 text-white" />
+              ) : (
+                <VolumeX className="w-3.5 h-3.5 text-slate-400" />
+              )}
+            </button>
+          </div>
+        </header>
+      ) : !zenMode ? (
         <header className="fixed top-0 left-0 right-0 z-50 px-2.5 sm:px-6 pt-2.5 pb-2 pointer-events-none">
           <div className="max-w-5xl mx-auto flex items-center justify-between gap-1.5 pointer-events-auto">
             {/* Left: Brand Title & Audio Toggle */}
@@ -771,7 +837,7 @@ export default function App() {
               <button
                 onClick={toggleSound}
                 title={soundEnabled ? 'Matikan Suara' : 'Nyalakan Suara'}
-                className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-white/90 hover:bg-white border border-white shadow-md flex items-center justify-center text-slate-700 transition-transform active:scale-95 shrink-0"
+                className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-white/90 hover:bg-white border border-white shadow-md flex items-center justify-center text-slate-700 transition-transform active:scale-95 shrink-0 cursor-pointer"
               >
                 {soundEnabled ? (
                   <Volume2 className="w-4 h-4 text-slate-700" />
@@ -823,7 +889,7 @@ export default function App() {
               <button
                 onClick={handleChestWidgetClick}
                 title="Peti Harta Karun (Hadiah Crystal & Koin setiap 7 Jam)"
-                className="pointer-events-auto group relative flex flex-col items-center bg-transparent border-0 shadow-none p-0 focus:outline-none transition-transform active:scale-90"
+                className="pointer-events-auto group relative flex flex-col items-center bg-transparent border-0 shadow-none p-0 focus:outline-none transition-transform active:scale-90 cursor-pointer"
               >
                 {/* Pure Animated Treasure Chest Sprite (Tanpa Background Kotak) */}
                 <div className="relative flex items-center justify-center">
@@ -855,10 +921,10 @@ export default function App() {
             </div>
           )}
         </header>
-      )}
+      ) : null}
 
-      {/* Floating Quick Controls (Always visible on mobile & desktop: Hemat Energi / HD + Reset Kamera + Mode Zen) */}
-      {activeModal === 'none' && (
+      {/* Floating Quick Controls (Hanya untuk Pemilik: Hemat Energi / HD + Reset Kamera + Mode Zen) */}
+      {!isVisitor && activeModal === 'none' && (
         <div className="fixed top-15 right-2.5 sm:right-6 z-40 flex items-center gap-1.5 sm:gap-2">
           <button
             onClick={() => {
@@ -868,7 +934,7 @@ export default function App() {
               );
             }}
             title="Ubah Mode Grafis: Hemat Energi (Anti-Lag 60FPS) atau HD"
-            className={`h-8 px-3 rounded-xl border shadow-sm flex items-center gap-1.5 text-[11px] font-extrabold transition-all active:scale-95 ${
+            className={`h-8 px-3 rounded-xl border shadow-sm flex items-center gap-1.5 text-[11px] font-extrabold transition-all active:scale-95 cursor-pointer ${
               performanceMode === 'potato'
                 ? 'bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-300'
                 : 'bg-sky-500 hover:bg-sky-600 text-white border-sky-300'
@@ -886,7 +952,7 @@ export default function App() {
               setCameraResetTrigger((c) => c + 1);
             }}
             title="Reset Sudut Kamera Isometrik"
-            className="w-8 h-8 rounded-xl bg-white/90 hover:bg-white border border-slate-200/80 shadow-sm flex items-center justify-center text-slate-700 transition-transform active:scale-95"
+            className="w-8 h-8 rounded-xl bg-white/90 hover:bg-white border border-slate-200/80 shadow-sm flex items-center justify-center text-slate-700 transition-transform active:scale-95 cursor-pointer"
           >
             <RefreshCw className="w-3.5 h-3.5" />
           </button>
@@ -897,7 +963,7 @@ export default function App() {
               setZenMode((z) => !z);
             }}
             title={zenMode ? 'Tampilkan Navigasi' : 'Mode Zen (Sembunyikan UI)'}
-            className="w-8 h-8 rounded-xl bg-white/90 hover:bg-white border border-slate-200/80 shadow-sm flex items-center justify-center text-slate-700 transition-transform active:scale-95"
+            className="w-8 h-8 rounded-xl bg-white/90 hover:bg-white border border-slate-200/80 shadow-sm flex items-center justify-center text-slate-700 transition-transform active:scale-95 cursor-pointer"
           >
             {zenMode ? (
               <Eye className="w-3.5 h-3.5" />
@@ -908,8 +974,8 @@ export default function App() {
         </div>
       )}
 
-      {/* UNIFIED BOTTOM NAVIGATION DOCK (Solid base container so nothing bleeds through at the bottom) */}
-      {!zenMode && (
+      {/* UNIFIED BOTTOM NAVIGATION DOCK (Hanya untuk Pemilik) */}
+      {!isVisitor && !zenMode && (
         <div className="fixed bottom-0 left-0 right-0 z-50 px-2.5 pb-2.5 pt-1.5 bg-gradient-to-t from-[#DCEFFB] via-[#DCEFFB]/95 to-transparent pointer-events-none flex justify-center">
           <nav
             aria-label="Navigasi Utama NuePet Zoo"
@@ -921,7 +987,7 @@ export default function App() {
                 soundFX.playUiClick();
                 setActiveModal((m) => (m === 'gacha' ? 'none' : 'gacha'));
               }}
-              className="flex-1 h-13 sm:h-14 rounded-2xl bg-gradient-to-b from-[#9B4DFF] to-[#7C2AE8] hover:from-[#A855F7] hover:to-[#7E22CE] active:scale-[0.98] transition-all shadow-md flex items-center justify-center gap-2 px-2.5 text-white"
+              className="flex-1 h-13 sm:h-14 rounded-2xl bg-gradient-to-b from-[#9B4DFF] to-[#7C2AE8] hover:from-[#A855F7] hover:to-[#7E22CE] active:scale-[0.98] transition-all shadow-md flex items-center justify-center gap-2 px-2.5 text-white cursor-pointer"
             >
               <GoldenEggIcon className="w-6 h-7 sm:w-6.5 sm:h-7.5" />
               <span className="font-['Plus_Jakarta_Sans'] font-bold text-xs sm:text-sm tracking-wide whitespace-nowrap">
@@ -935,7 +1001,7 @@ export default function App() {
                 soundFX.playUiClick();
                 setActiveModal((m) => (m === 'manage' ? 'none' : 'manage'));
               }}
-              className="relative flex-[1.3] h-13 sm:h-14 rounded-2xl bg-gradient-to-b from-[#26B99A] to-[#149E78] hover:from-[#14B8A6] hover:to-[#0F766E] active:scale-[0.98] transition-all shadow-md flex items-center justify-between px-2.5 text-white"
+              className="relative flex-[1.3] h-13 sm:h-14 rounded-2xl bg-gradient-to-b from-[#26B99A] to-[#149E78] hover:from-[#14B8A6] hover:to-[#0F766E] active:scale-[0.98] transition-all shadow-md flex items-center justify-between px-2.5 text-white cursor-pointer"
             >
               <div className="flex items-center gap-1 min-w-0">
                 <img
@@ -964,7 +1030,7 @@ export default function App() {
                 soundFX.playUiClick();
                 setActiveModal((m) => (m === 'catalog' ? 'none' : 'catalog'));
               }}
-              className="w-22 sm:w-26 h-13 sm:h-14 rounded-2xl bg-white hover:bg-slate-50 active:scale-[0.98] transition-all border border-slate-200/90 shadow-sm flex flex-col items-center justify-center text-slate-800 shrink-0"
+              className="w-22 sm:w-26 h-13 sm:h-14 rounded-2xl bg-white hover:bg-slate-50 active:scale-[0.98] transition-all border border-slate-200/90 shadow-sm flex flex-col items-center justify-center text-slate-800 shrink-0 cursor-pointer"
             >
               <BookOpen className="w-4.5 h-4.5 text-[#8B5CF6]" />
               <span className="font-['Plus_Jakarta_Sans'] font-bold text-[11px] sm:text-xs mt-0.5 whitespace-nowrap">
@@ -975,10 +1041,16 @@ export default function App() {
         </div>
       )}
 
+      {/* Indikator Wilayah Pet Kosong (Khusus Mode Pengunjung jika pemilik belum menempatkan pet) */}
+      {isVisitor && deployedPets.length === 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 px-4 py-2 rounded-full bg-slate-900/85 backdrop-blur-md border border-slate-700/80 shadow-lg text-slate-300 text-xs font-semibold flex items-center gap-2 pointer-events-none">
+          <span>🐾</span>
+          <span>Pemilik belum menempatkan peliharaan di pulau ini</span>
+        </div>
+      )}
 
-
-      {/* 7-Hour Treasure Chest Opening Ceremony & Reward Modal */}
-      {activeModal === 'chest' && (
+      {/* 7-Hour Treasure Chest Opening Ceremony & Reward Modal (Hanya Pemilik) */}
+      {!isVisitor && activeModal === 'chest' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs">
           {!isChestReady ? (
             /* TAMPILAN COOLDOWN: Hanya Menampilkan Hitung Mundur Waktu, TANPA Data Hadiah */
@@ -1154,57 +1226,62 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal Konversi Koin ke Crystal Akun (50.000 Koin = 5.000 Crystal) */}
-      <CoinConverterModal
-        isOpen={activeModal === 'converter'}
-        coins={coins}
-        crystals={gems}
-        onClose={() => setActiveModal('none')}
-        onConvert={handleConvertCoins}
-      />
+      {/* Modal & Drawer Khusus Pemilik Akun (Tidak Ditampilkan untuk Pengunjung) */}
+      {!isVisitor && (
+        <>
+          {/* Modal Konversi Koin ke Crystal Akun (50.000 Koin = 5.000 Crystal) */}
+          <CoinConverterModal
+            isOpen={activeModal === 'converter'}
+            coins={coins}
+            crystals={gems}
+            onClose={() => setActiveModal('none')}
+            onConvert={handleConvertCoins}
+          />
 
-      {/* 3D Egg Gacha Modal (500 Crystal 1x / 5.000 Crystal 10x) */}
-      <GachaEggModal
-        isOpen={activeModal === 'gacha'}
-        gems={gems}
-        onClose={() => setActiveModal('none')}
-        onPerformGacha={handlePerformGacha}
-      />
+          {/* 3D Egg Gacha Modal (500 Crystal 1x / 5.000 Crystal 10x) */}
+          <GachaEggModal
+            isOpen={activeModal === 'gacha'}
+            gems={gems}
+            onClose={() => setActiveModal('none')}
+            onPerformGacha={handlePerformGacha}
+          />
 
-      {/* Kelola Pet & Island Drawer */}
-      <ManageIslandDrawer
-        isOpen={activeModal === 'manage'}
-        coins={coins}
-        ownedPets={ownedPets}
-        activeSkyId={activeSkyId}
-        unlockedSkyIds={unlockedSkyIds}
-        activeIslandId={activeIslandId}
-        unlockedIslandIds={unlockedIslandIds}
-        onSelectSky={handleSelectSky}
-        onSelectIsland={handleSelectIsland}
-        onMergeSpecies={handleMergeSpecies}
-        onDirectStarUpgrade={handleDirectStarUpgrade}
-        onClose={() => setActiveModal('none')}
-        onToggleDeploy={handleToggleDeploy}
-        onAutoDeployBest={handleAutoDeployBest}
-      />
+          {/* Kelola Pet & Island Drawer */}
+          <ManageIslandDrawer
+            isOpen={activeModal === 'manage'}
+            coins={coins}
+            ownedPets={ownedPets}
+            activeSkyId={activeSkyId}
+            unlockedSkyIds={unlockedSkyIds}
+            activeIslandId={activeIslandId}
+            unlockedIslandIds={unlockedIslandIds}
+            onSelectSky={handleSelectSky}
+            onSelectIsland={handleSelectIsland}
+            onMergeSpecies={handleMergeSpecies}
+            onDirectStarUpgrade={handleDirectStarUpgrade}
+            onClose={() => setActiveModal('none')}
+            onToggleDeploy={handleToggleDeploy}
+            onAutoDeployBest={handleAutoDeployBest}
+          />
 
-      {/* Katalog Pet Drawer */}
-      <PetCatalogDrawer
-        isOpen={activeModal === 'catalog'}
-        ownedPets={ownedPets}
-        activeIslandId={activeIslandId}
-        onMergeSpecies={handleMergeSpecies}
-        onEvolveSpeciesStage={handleEvolveSpeciesStage}
-        onClose={() => setActiveModal('none')}
-      />
+          {/* Katalog Pet Drawer */}
+          <PetCatalogDrawer
+            isOpen={activeModal === 'catalog'}
+            ownedPets={ownedPets}
+            activeIslandId={activeIslandId}
+            onMergeSpecies={handleMergeSpecies}
+            onEvolveSpeciesStage={handleEvolveSpeciesStage}
+            onClose={() => setActiveModal('none')}
+          />
 
-      {/* Architecture & Live FSM AI State Inspector Drawer */}
-      <ArchitectureGuideDrawer
-        isOpen={activeModal === 'architecture'}
-        telemetry={liveTelemetry}
-        onClose={() => setActiveModal('none')}
-      />
+          {/* Architecture & Live FSM AI State Inspector Drawer */}
+          <ArchitectureGuideDrawer
+            isOpen={activeModal === 'architecture'}
+            telemetry={liveTelemetry}
+            onClose={() => setActiveModal('none')}
+          />
+        </>
+      )}
     </div>
   );
 }

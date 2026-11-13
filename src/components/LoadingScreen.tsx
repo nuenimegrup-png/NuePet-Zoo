@@ -3,6 +3,7 @@ import { GoldenEggIcon } from './GachaEggModal';
 
 interface LoadingScreenProps {
   onFinished: () => void;
+  isReady?: boolean;
 }
 
 const PRELOAD_ASSETS = [
@@ -30,21 +31,36 @@ const GAME_TIPS = [
   'Tips: Gunakan mode ⚡ Hemat Energi di pojok kanan atas agar permainan tetap ringan 60 FPS di HP.',
 ];
 
-export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onFinished }) => {
+export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onFinished, isReady = false }) => {
   const [progress, setProgress] = useState<number>(0);
   const [isFadingOut, setIsFadingOut] = useState<boolean>(false);
   const [tipIndex, setTipIndex] = useState<number>(0);
 
   useEffect(() => {
-    // Preload actual pet GIFs and 3D sprite sheets in background (non-blocking)
-    PRELOAD_ASSETS.forEach((src) => {
-      const img = new Image();
-      img.src = src;
-    });
+    // Non-blocking preloading in idle background
+    const timer = window.setTimeout(() => {
+      PRELOAD_ASSETS.forEach((src) => {
+        const img = new Image();
+        img.src = src;
+      });
+    }, 100);
 
-    // Loading cepat & mulus (~600ms) agar pemain tidak menunggu lama
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (isReady) {
+      setProgress(100);
+      setIsFadingOut(true);
+      const doneTimer = window.setTimeout(() => {
+        onFinished();
+      }, 120);
+      return () => clearTimeout(doneTimer);
+    }
+
+    // Loading super kilat (~160ms) agar pemain langsung masuk tanpa menunggu lama
     const startTime = performance.now();
-    const targetDuration = 650;
+    const targetDuration = 160;
 
     const interval = window.setInterval(() => {
       const elapsed = performance.now() - startTime;
@@ -60,13 +76,13 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onFinished }) => {
           setIsFadingOut(true);
           setTimeout(() => {
             onFinished();
-          }, 200);
-        }, 120);
+          }, 120);
+        }, 60);
       }
-    }, 25);
+    }, 20);
 
     return () => clearInterval(interval);
-  }, [onFinished]);
+  }, [onFinished, isReady]);
 
   const currentStep =
     [...LOADING_STEPS].reverse().find((s) => progress >= s.threshold) ||

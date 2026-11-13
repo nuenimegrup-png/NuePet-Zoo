@@ -31,6 +31,8 @@ interface SanctuaryCanvasProps {
   performanceMode?: PerformanceMode;
   telemetryEnabled?: boolean;
   cameraResetTrigger: number;
+  isVisitor?: boolean;
+  onCanvasReady?: () => void;
   onPetTapped: (
     instanceId: string,
     bonusCoins: number,
@@ -51,6 +53,8 @@ export const SanctuaryCanvas: React.FC<SanctuaryCanvasProps> = ({
   performanceMode = 'potato',
   telemetryEnabled = false,
   cameraResetTrigger,
+  isVisitor = false,
+  onCanvasReady,
   onPetTapped,
   onPassiveCoinTick,
   onTelemetryUpdate,
@@ -64,6 +68,8 @@ export const SanctuaryCanvas: React.FC<SanctuaryCanvasProps> = ({
     telemetryEnabled,
     performanceMode,
     islandThemeId,
+    isVisitor,
+    onCanvasReady,
   });
   useEffect(() => {
     callbacksRef.current = {
@@ -73,6 +79,8 @@ export const SanctuaryCanvas: React.FC<SanctuaryCanvasProps> = ({
       telemetryEnabled,
       performanceMode,
       islandThemeId,
+      isVisitor,
+      onCanvasReady,
     };
   }, [
     onPetTapped,
@@ -81,6 +89,8 @@ export const SanctuaryCanvas: React.FC<SanctuaryCanvasProps> = ({
     telemetryEnabled,
     performanceMode,
     islandThemeId,
+    isVisitor,
+    onCanvasReady,
   ]);
 
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -130,7 +140,7 @@ export const SanctuaryCanvas: React.FC<SanctuaryCanvasProps> = ({
     const targetDpr =
       performanceMode === 'potato'
         ? 1
-        : Math.min(window.devicePixelRatio || 1, 1.5);
+        : Math.min(window.devicePixelRatio || 1, 1.25);
     renderer.setPixelRatio(targetDpr);
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.shadowMap.needsUpdate = true;
@@ -189,18 +199,8 @@ export const SanctuaryCanvas: React.FC<SanctuaryCanvasProps> = ({
     const container = canvasMountRef.current;
     if (!container) return;
 
-    const isSoftwareGl = (() => {
-      const gl = document.createElement('canvas').getContext('webgl2');
-      if (!gl) return true;
-      const ext = gl.getExtension('WEBGL_debug_renderer_info');
-      const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER;
-      const gpu = String(gl.getParameter(param));
-      gl.getExtension('WEBGL_lose_context')?.loseContext();
-      return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
-    })();
-
     const renderer = new THREE.WebGLRenderer({
-      antialias: !isSoftwareGl,
+      antialias: true,
       alpha: true,
       powerPreference: 'high-performance',
       stencil: false,
@@ -210,9 +210,9 @@ export const SanctuaryCanvas: React.FC<SanctuaryCanvasProps> = ({
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.08;
     const initialDpr =
-      isSoftwareGl || callbacksRef.current.performanceMode === 'potato'
+      callbacksRef.current.performanceMode === 'potato'
         ? 1
-        : Math.min(window.devicePixelRatio || 1, 1.5);
+        : Math.min(window.devicePixelRatio || 1, 1.25);
     renderer.setPixelRatio(initialDpr);
 
     // Enable realistic shadow mapping with cached shadow pass (0% per-frame shadow overhead!)
@@ -237,7 +237,7 @@ export const SanctuaryCanvas: React.FC<SanctuaryCanvasProps> = ({
     cameraRef.current = camera;
 
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = !isSoftwareGl;
+    controls.enableDamping = true;
     controls.dampingFactor = 0.07;
     controls.enablePan = false;
     controls.minPolarAngle = Math.PI / 5.2;
@@ -251,7 +251,7 @@ export const SanctuaryCanvas: React.FC<SanctuaryCanvasProps> = ({
     controlsRef.current = controls;
 
     const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
-    const env = buildFloatingIslandScene(scene, maxAnisotropy, isSoftwareGl);
+    const env = buildFloatingIslandScene(scene, maxAnisotropy, false);
     envRefs.current = env;
     applyIslandTheme(env, islandThemeId, maxAnisotropy);
     applyTimeOfDayLighting(scene, env, timeOfDay);
@@ -285,9 +285,7 @@ export const SanctuaryCanvas: React.FC<SanctuaryCanvasProps> = ({
       agentsMapRef.current.set(pet.instanceId, agent);
     });
 
-    if (!isSoftwareGl) {
-      renderer.compile(scene, camera);
-    }
+    renderer.compile(scene, camera);
 
     const raycaster = new THREE.Raycaster();
     raycaster.layers.set(1);
@@ -363,22 +361,7 @@ export const SanctuaryCanvas: React.FC<SanctuaryCanvasProps> = ({
     let frameId = 0;
     let telemetryTimer = 0;
     let frameParity = 0;
-
-    function afterDraw(cb: () => void) {
-      const gl = renderer.getContext() as WebGL2RenderingContext;
-      const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-      gl.flush();
-      const poll = () => {
-        const state = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
-        if (state === gl.UNSIGNALED) {
-          frameId = window.setTimeout(poll, 5);
-        } else {
-          if (sync) gl.deleteSync(sync);
-          frameId = window.setTimeout(cb, 80);
-        }
-      };
-      frameId = window.setTimeout(poll, 5);
-    }
+    let firstFrameRendered = false;
 
     function tick() {
       const rawDelta = clock.getDelta();
@@ -497,7 +480,7 @@ export const SanctuaryCanvas: React.FC<SanctuaryCanvasProps> = ({
         totalTickCoins += earned;
       });
 
-      if (totalTickCoins > 0) {
+      if (totalTickCoins > 0 && !callbacksRef.current.isVisitor) {
         callbacksRef.current.onPassiveCoinTick(totalTickCoins);
       }
 
@@ -532,11 +515,12 @@ export const SanctuaryCanvas: React.FC<SanctuaryCanvasProps> = ({
 
       renderer.render(scene, camera);
 
-      if (isSoftwareGl) {
-        afterDraw(tick);
-      } else {
-        frameId = requestAnimationFrame(tick);
+      if (!firstFrameRendered) {
+        firstFrameRendered = true;
+        callbacksRef.current.onCanvasReady?.();
       }
+
+      frameId = requestAnimationFrame(tick);
     }
 
     frameId = requestAnimationFrame(tick);
